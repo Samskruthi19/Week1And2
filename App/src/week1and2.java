@@ -1,135 +1,122 @@
 import java.util.*;
 
-class Transaction {
-    int id;
-    int amount;
-    String merchant;
-    String account;
-    long timestamp;
+class Video {
+    String id;
+    String content;
 
-    Transaction(int id, int amount, String merchant, String account, long timestamp) {
+    Video(String id, String content) {
         this.id = id;
-        this.amount = amount;
-        this.merchant = merchant;
-        this.account = account;
-        this.timestamp = timestamp;
+        this.content = content;
     }
 }
 
-class TransactionAnalyzer {
+class MultiLevelCache {
 
-    private List<Transaction> transactions = new ArrayList<>();
+    private final int L1_CAPACITY = 10000;
+    private final int L2_CAPACITY = 100000;
 
-    public void addTransaction(Transaction t) {
-        transactions.add(t);
+    private LinkedHashMap<String, Video> L1Cache = new LinkedHashMap<>(L1_CAPACITY, 0.75f, true);
+    private HashMap<String, Video> L2Cache = new HashMap<>();
+    private Map<String, Video> L3Database = new HashMap<>();
+    private Map<String, Integer> accessCount = new HashMap<>();
+
+    private int L1Hits = 0, L2Hits = 0, L3Hits = 0, totalRequests = 0;
+    private double L1Time = 0, L2Time = 0, L3Time = 0;
+
+    public void addVideoToDatabase(Video video) {
+        L3Database.put(video.id, video);
     }
 
-    public List<int[]> findTwoSum(int target) {
-        List<int[]> result = new ArrayList<>();
-        Map<Integer, Transaction> map = new HashMap<>();
+    public Video getVideo(String videoId) {
+        totalRequests++;
 
-        for (Transaction t : transactions) {
-            int complement = target - t.amount;
-            if (map.containsKey(complement)) {
-                result.add(new int[]{map.get(complement).id, t.id});
-            }
-            map.put(t.amount, t);
+        if (L1Cache.containsKey(videoId)) {
+            L1Hits++;
+            L1Time += 0.5;
+            return L1Cache.get(videoId);
         }
-        return result;
+
+        if (L2Cache.containsKey(videoId)) {
+            L2Hits++;
+            L2Time += 5;
+            Video v = L2Cache.get(videoId);
+            promoteToL1(videoId, v);
+            return v;
+        }
+
+        if (L3Database.containsKey(videoId)) {
+            L3Hits++;
+            L3Time += 150;
+            Video v = L3Database.get(videoId);
+            accessCount.put(videoId, 1);
+            addToL2(videoId, v);
+            return v;
+        }
+
+        return null;
     }
 
-    public List<int[]> findTwoSumWithinWindow(int target, long windowMillis) {
-        List<int[]> result = new ArrayList<>();
-        Map<Integer, List<Transaction>> map = new HashMap<>();
-
-        transactions.sort(Comparator.comparingLong(t -> t.timestamp));
-
-        for (Transaction t : transactions) {
-            int complement = target - t.amount;
-            if (map.containsKey(complement)) {
-                for (Transaction c : map.get(complement)) {
-                    if (Math.abs(t.timestamp - c.timestamp) <= windowMillis) {
-                        result.add(new int[]{c.id, t.id});
-                    }
-                }
-            }
-            map.computeIfAbsent(t.amount, k -> new ArrayList<>()).add(t);
+    private void promoteToL1(String videoId, Video video) {
+        if (L1Cache.size() >= L1_CAPACITY) {
+            Iterator<String> it = L1Cache.keySet().iterator();
+            it.next();
+            it.remove();
         }
-        return result;
+        L1Cache.put(videoId, video);
+        accessCount.put(videoId, accessCount.getOrDefault(videoId, 0) + 1);
     }
 
-    public List<List<Integer>> findKSum(int k, int target) {
-        List<List<Integer>> result = new ArrayList<>();
-        transactions.sort(Comparator.comparingInt(t -> t.amount));
-        kSumHelper(transactions, 0, k, target, new ArrayList<>(), result);
-        return result;
+    private void addToL2(String videoId, Video video) {
+        if (L2Cache.size() >= L2_CAPACITY) {
+            Iterator<String> it = L2Cache.keySet().iterator();
+            it.next();
+            it.remove();
+        }
+        L2Cache.put(videoId, video);
     }
 
-    private void kSumHelper(List<Transaction> txns, int start, int k, int target,
-                            List<Integer> path, List<List<Integer>> result) {
-        if (k == 2) {
-            int left = start, right = txns.size() - 1;
-            while (left < right) {
-                int sum = txns.get(left).amount + txns.get(right).amount;
-                if (sum == target) {
-                    List<Integer> pair = new ArrayList<>(path);
-                    pair.add(txns.get(left).id);
-                    pair.add(txns.get(right).id);
-                    result.add(pair);
-                    left++;
-                    right--;
-                } else if (sum < target) left++;
-                else right--;
-            }
-            return;
-        }
-
-        for (int i = start; i < txns.size(); i++) {
-            path.add(txns.get(i).id);
-            kSumHelper(txns, i + 1, k - 1, target - txns.get(i).amount, path, result);
-            path.remove(path.size() - 1);
-        }
+    public void updateVideo(String videoId, String newContent) {
+        Video video = new Video(videoId, newContent);
+        L3Database.put(videoId, video);
+        L1Cache.remove(videoId);
+        L2Cache.remove(videoId);
+        accessCount.remove(videoId);
     }
 
-    public List<Map<String, Object>> detectDuplicates() {
-        List<Map<String, Object>> duplicates = new ArrayList<>();
-        Map<String, List<Transaction>> map = new HashMap<>();
+    public void printStatistics() {
+        double L1HitRate = totalRequests == 0 ? 0 : L1Hits * 100.0 / totalRequests;
+        double L2HitRate = totalRequests == 0 ? 0 : L2Hits * 100.0 / totalRequests;
+        double L3HitRate = totalRequests == 0 ? 0 : L3Hits * 100.0 / totalRequests;
+        double overallHitRate = L1HitRate + L2HitRate + L3HitRate;
 
-        for (Transaction t : transactions) {
-            String key = t.amount + "|" + t.merchant;
-            map.computeIfAbsent(key, k -> new ArrayList<>()).add(t);
-        }
+        double avgL1 = L1Hits == 0 ? 0 : L1Time / L1Hits;
+        double avgL2 = L2Hits == 0 ? 0 : L2Time / L2Hits;
+        double avgL3 = L3Hits == 0 ? 0 : L3Time / L3Hits;
+        double avgOverall = totalRequests == 0 ? 0 : (L1Time + L2Time + L3Time) / totalRequests;
 
-        for (Map.Entry<String, List<Transaction>> entry : map.entrySet()) {
-            List<Transaction> txns = entry.getValue();
-            Set<String> accounts = new HashSet<>();
-            for (Transaction t : txns) accounts.add(t.account);
-
-            if (accounts.size() > 1) {
-                Map<String, Object> dup = new HashMap<>();
-                dup.put("amount", txns.get(0).amount);
-                dup.put("merchant", txns.get(0).merchant);
-                dup.put("accounts", accounts);
-                duplicates.add(dup);
-            }
-        }
-        return duplicates;
+        System.out.printf("L1: Hit Rate %.1f%%, Avg Time: %.1fms%n", L1HitRate, avgL1);
+        System.out.printf("L2: Hit Rate %.1f%%, Avg Time: %.1fms%n", L2HitRate, avgL2);
+        System.out.printf("L3: Hit Rate %.1f%%, Avg Time: %.1fms%n", L3HitRate, avgL3);
+        System.out.printf("Overall: Hit Rate %.1f%%, Avg Time: %.1fms%n", overallHitRate, avgOverall);
     }
 }
 
 public class week1and2 {
     public static void main(String[] args) {
-        TransactionAnalyzer analyzer = new TransactionAnalyzer();
+        MultiLevelCache cache = new MultiLevelCache();
 
-        analyzer.addTransaction(new Transaction(1, 500, "Store A", "acc1", 36000000));
-        analyzer.addTransaction(new Transaction(2, 300, "Store B", "acc2", 36900000));
-        analyzer.addTransaction(new Transaction(3, 200, "Store C", "acc3", 37800000));
-        analyzer.addTransaction(new Transaction(4, 500, "Store A", "acc2", 38000000));
+        cache.addVideoToDatabase(new Video("video_123", "Video Content 123"));
+        cache.addVideoToDatabase(new Video("video_999", "Video Content 999"));
 
-        System.out.println("findTwoSum(500) → " + analyzer.findTwoSum(500));
-        System.out.println("findTwoSumWithinWindow(500, 3600000) → " +
-                analyzer.findTwoSumWithinWindow(500, 3600000));
-        System.out.println("findKSum(k=3, target=1000) → " + analyzer.findKSum(3, 1000));
-        System.out.println("detectDuplicates() → " + analyzer.detectDuplicates());
+        System.out.println("First access video_123 → " + cache.getVideo("video_123").content);
+        System.out.println("Second access video_123 → " + cache.getVideo("video_123").content);
+        System.out.println("Access video_999 → " + cache.getVideo("video_999").content);
+
+        cache.printStatistics();
+
+        cache.updateVideo("video_123", "Updated Content 123");
+        System.out.println("After update video_123 → " + cache.getVideo("video_123").content);
+
+        cache.printStatistics();
     }
 }
