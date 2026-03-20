@@ -1,83 +1,89 @@
 import java.util.*;
 
-class PlagiarismDetector {
+class Event {
+    String url;
+    String userId;
+    String source;
 
-    private int n;
-    private HashMap<String, Set<String>> ngramIndex = new HashMap<>();
-    private HashMap<String, List<String>> documentNgrams = new HashMap<>();
+    Event(String url, String userId, String source) {
+        this.url = url;
+        this.userId = userId;
+        this.source = source;
+    }
+}
 
-    public PlagiarismDetector(int n) {
-        this.n = n;
+class AnalyticsDashboard {
+
+    private HashMap<String, Integer> pageViews = new HashMap<>();
+    private HashMap<String, Set<String>> uniqueVisitors = new HashMap<>();
+    private HashMap<String, Integer> sourceCount = new HashMap<>();
+
+    public synchronized void processEvent(Event event) {
+        pageViews.put(event.url, pageViews.getOrDefault(event.url, 0) + 1);
+
+        uniqueVisitors.computeIfAbsent(event.url, k -> new HashSet<>()).add(event.userId);
+
+        sourceCount.put(event.source, sourceCount.getOrDefault(event.source, 0) + 1);
     }
 
-    public void addDocument(String docId, String content) {
-        List<String> ngrams = generateNgrams(content);
-        documentNgrams.put(docId, ngrams);
-
-        for (String gram : ngrams) {
-            ngramIndex.computeIfAbsent(gram, k -> new HashSet<>()).add(docId);
-        }
-    }
-
-    public void analyzeDocument(String docId, String content) {
-        List<String> ngrams = generateNgrams(content);
-        Map<String, Integer> matchCount = new HashMap<>();
-
-        for (String gram : ngrams) {
-            if (ngramIndex.containsKey(gram)) {
-                for (String existingDoc : ngramIndex.get(gram)) {
-                    matchCount.put(existingDoc, matchCount.getOrDefault(existingDoc, 0) + 1);
+    public void startDashboard() {
+        Thread dashboardThread = new Thread(() -> {
+            while (true) {
+                try {
+                    Thread.sleep(5000);
+                    displayDashboard();
+                } catch (InterruptedException e) {
+                    break;
                 }
             }
-        }
-
-        System.out.println("Extracted " + ngrams.size() + " n-grams");
-
-        for (Map.Entry<String, Integer> entry : matchCount.entrySet()) {
-            String otherDoc = entry.getKey();
-            int matches = entry.getValue();
-            double similarity = (matches * 100.0) / ngrams.size();
-
-            System.out.println("Found " + matches + " matching n-grams with \"" + otherDoc + "\"");
-            System.out.printf("Similarity: %.1f%% ", similarity);
-
-            if (similarity > 50) {
-                System.out.println("(PLAGIARISM DETECTED)");
-            } else if (similarity > 10) {
-                System.out.println("(suspicious)");
-            } else {
-                System.out.println("(low)");
-            }
-        }
+        });
+        dashboardThread.setDaemon(true);
+        dashboardThread.start();
     }
 
-    private List<String> generateNgrams(String text) {
-        String[] words = text.toLowerCase().split("\\s+");
-        List<String> ngrams = new ArrayList<>();
+    private synchronized void displayDashboard() {
+        System.out.println("\n--- Dashboard Update ---");
 
-        for (int i = 0; i <= words.length - n; i++) {
-            StringBuilder sb = new StringBuilder();
-            for (int j = 0; j < n; j++) {
-                sb.append(words[i + j]).append(" ");
-            }
-            ngrams.add(sb.toString().trim());
+        PriorityQueue<Map.Entry<String, Integer>> pq =
+                new PriorityQueue<>((a, b) -> b.getValue() - a.getValue());
+
+        pq.addAll(pageViews.entrySet());
+
+        System.out.println("Top Pages:");
+        int count = 0;
+        while (!pq.isEmpty() && count < 10) {
+            Map.Entry<String, Integer> entry = pq.poll();
+            String url = entry.getKey();
+            int views = entry.getValue();
+            int unique = uniqueVisitors.getOrDefault(url, new HashSet<>()).size();
+
+            System.out.println((count + 1) + ". " + url + " - " + views + " views (" + unique + " unique)");
+            count++;
         }
 
-        return ngrams;
+        System.out.println("\nTraffic Sources:");
+        for (Map.Entry<String, Integer> entry : sourceCount.entrySet()) {
+            System.out.println(entry.getKey() + " - " + entry.getValue());
+        }
     }
 }
 
 public class week1and2 {
-    public static void main(String[] args) {
-        PlagiarismDetector detector = new PlagiarismDetector(5);
+    public static void main(String[] args) throws InterruptedException {
+        AnalyticsDashboard dashboard = new AnalyticsDashboard();
+        dashboard.startDashboard();
 
-        detector.addDocument("essay_089.txt",
-                "this is a sample essay for plagiarism detection system testing purpose");
+        String[] urls = {"/article/breaking-news", "/sports/championship", "/tech/ai"};
+        String[] sources = {"google", "facebook", "direct"};
+        Random rand = new Random();
 
-        detector.addDocument("essay_092.txt",
-                "this is a sample essay for plagiarism detection system testing purpose with extra content added");
+        for (int i = 0; i < 50; i++) {
+            String url = urls[rand.nextInt(urls.length)];
+            String user = "user_" + rand.nextInt(20);
+            String source = sources[rand.nextInt(sources.length)];
 
-        detector.analyzeDocument("essay_123.txt",
-                "this is a sample essay for plagiarism detection system testing purpose");
+            dashboard.processEvent(new Event(url, user, source));
+            Thread.sleep(100);
+        }
     }
 }
