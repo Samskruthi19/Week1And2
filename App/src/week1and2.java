@@ -1,115 +1,83 @@
 import java.util.*;
 
-class DNSEntry {
-    String domain;
-    String ipAddress;
-    long expiryTime;
+class PlagiarismDetector {
 
-    DNSEntry(String domain, String ipAddress, long ttlMillis) {
-        this.domain = domain;
-        this.ipAddress = ipAddress;
-        this.expiryTime = System.currentTimeMillis() + ttlMillis;
+    private int n;
+    private HashMap<String, Set<String>> ngramIndex = new HashMap<>();
+    private HashMap<String, List<String>> documentNgrams = new HashMap<>();
+
+    public PlagiarismDetector(int n) {
+        this.n = n;
     }
 
-    boolean isExpired() {
-        return System.currentTimeMillis() > expiryTime;
-    }
-}
+    public void addDocument(String docId, String content) {
+        List<String> ngrams = generateNgrams(content);
+        documentNgrams.put(docId, ngrams);
 
-class DNSCache {
-
-    private final int capacity;
-    private LinkedHashMap<String, DNSEntry> cache;
-    private int hits = 0;
-    private int misses = 0;
-    private long totalLookupTime = 0;
-    private int totalRequests = 0;
-
-    public DNSCache(int capacity) {
-        this.capacity = capacity;
-        this.cache = new LinkedHashMap<String, DNSEntry>(capacity, 0.75f, true) {
-            protected boolean removeEldestEntry(Map.Entry<String, DNSEntry> eldest) {
-                return size() > DNSCache.this.capacity;
-            }
-        };
-        startCleanupThread();
-    }
-
-    public synchronized String resolve(String domain) {
-        long start = System.nanoTime();
-        totalRequests++;
-
-        DNSEntry entry = cache.get(domain);
-
-        if (entry != null && !entry.isExpired()) {
-            hits++;
-            totalLookupTime += (System.nanoTime() - start);
-            return "Cache HIT → " + entry.ipAddress;
+        for (String gram : ngrams) {
+            ngramIndex.computeIfAbsent(gram, k -> new HashSet<>()).add(docId);
         }
-
-        if (entry != null && entry.isExpired()) {
-            cache.remove(domain);
-        }
-
-        misses++;
-        String ip = queryUpstreamDNS(domain);
-        cache.put(domain, new DNSEntry(domain, ip, 300000));
-
-        totalLookupTime += (System.nanoTime() - start);
-        return "Cache MISS → " + ip;
     }
 
-    private String queryUpstreamDNS(String domain) {
-        Random rand = new Random();
-        return "172.217.14." + (100 + rand.nextInt(100));
-    }
+    public void analyzeDocument(String docId, String content) {
+        List<String> ngrams = generateNgrams(content);
+        Map<String, Integer> matchCount = new HashMap<>();
 
-    private void startCleanupThread() {
-        Thread cleaner = new Thread(() -> {
-            while (true) {
-                try {
-                    Thread.sleep(5000);
-                    cleanExpiredEntries();
-                } catch (InterruptedException e) {
-                    break;
+        for (String gram : ngrams) {
+            if (ngramIndex.containsKey(gram)) {
+                for (String existingDoc : ngramIndex.get(gram)) {
+                    matchCount.put(existingDoc, matchCount.getOrDefault(existingDoc, 0) + 1);
                 }
             }
-        });
-        cleaner.setDaemon(true);
-        cleaner.start();
-    }
+        }
 
-    private synchronized void cleanExpiredEntries() {
-        Iterator<Map.Entry<String, DNSEntry>> it = cache.entrySet().iterator();
-        while (it.hasNext()) {
-            if (it.next().getValue().isExpired()) {
-                it.remove();
+        System.out.println("Extracted " + ngrams.size() + " n-grams");
+
+        for (Map.Entry<String, Integer> entry : matchCount.entrySet()) {
+            String otherDoc = entry.getKey();
+            int matches = entry.getValue();
+            double similarity = (matches * 100.0) / ngrams.size();
+
+            System.out.println("Found " + matches + " matching n-grams with \"" + otherDoc + "\"");
+            System.out.printf("Similarity: %.1f%% ", similarity);
+
+            if (similarity > 50) {
+                System.out.println("(PLAGIARISM DETECTED)");
+            } else if (similarity > 10) {
+                System.out.println("(suspicious)");
+            } else {
+                System.out.println("(low)");
             }
         }
     }
 
-    public String getCacheStats() {
-        double hitRate = totalRequests == 0 ? 0 : (hits * 100.0 / totalRequests);
-        double avgTime = totalRequests == 0 ? 0 : (totalLookupTime / 1_000_000.0 / totalRequests);
-        return "Hit Rate: " + String.format("%.2f", hitRate) + "%, Avg Lookup Time: " + String.format("%.2f", avgTime) + " ms";
+    private List<String> generateNgrams(String text) {
+        String[] words = text.toLowerCase().split("\\s+");
+        List<String> ngrams = new ArrayList<>();
+
+        for (int i = 0; i <= words.length - n; i++) {
+            StringBuilder sb = new StringBuilder();
+            for (int j = 0; j < n; j++) {
+                sb.append(words[i + j]).append(" ");
+            }
+            ngrams.add(sb.toString().trim());
+        }
+
+        return ngrams;
     }
 }
 
 public class week1and2 {
-    public static void main(String[] args) throws InterruptedException {
-        DNSCache cache = new DNSCache(5);
+    public static void main(String[] args) {
+        PlagiarismDetector detector = new PlagiarismDetector(5);
 
-        System.out.println("resolve(\"google.com\") → " + cache.resolve("google.com"));
-        System.out.println("resolve(\"google.com\") → " + cache.resolve("google.com"));
+        detector.addDocument("essay_089.txt",
+                "this is a sample essay for plagiarism detection system testing purpose");
 
-        Thread.sleep(2000);
+        detector.addDocument("essay_092.txt",
+                "this is a sample essay for plagiarism detection system testing purpose with extra content added");
 
-        System.out.println("resolve(\"google.com\") → " + cache.resolve("google.com"));
-
-        Thread.sleep(310000);
-
-        System.out.println("resolve(\"google.com\") → " + cache.resolve("google.com"));
-
-        System.out.println("getCacheStats() → " + cache.getCacheStats());
+        detector.analyzeDocument("essay_123.txt",
+                "this is a sample essay for plagiarism detection system testing purpose");
     }
 }
